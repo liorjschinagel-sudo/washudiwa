@@ -99,7 +99,7 @@ export default function DashboardPage() {
   const [filterConfidence, setFilterConfidence] = useState<string | null>(null);
   const [interimAvailable, setInterimAvailable] = useState(false);
   const [myServices, setMyServices] = useState<string[]>([]);
-  const [filterStreaming, setFilterStreaming] = useState(false);
+  const [filterStreaming, setFilterStreaming] = useState<boolean | string>(false);
   const [filmProviders, setFilmProviders] = useState<Record<string, string[]>>({});
   const [showServicePicker, setShowServicePicker] = useState(false);
 
@@ -580,6 +580,9 @@ export default function DashboardPage() {
     .filter((r) => {
       if (!filterStreaming || myServices.length === 0) return true;
       const providers = filmProviders[r.filmSlug ?? ""] ?? [];
+      if (typeof filterStreaming === "string") {
+        return providers.includes(filterStreaming);
+      }
       return providers.some((p) => myServices.includes(p));
     })
     .sort((a, b) => {
@@ -955,15 +958,30 @@ export default function DashboardPage() {
                     <>
                       <span className="text-border mx-1">|</span>
                       <button
-                        onClick={() => setFilterStreaming(!filterStreaming)}
+                        onClick={() => setFilterStreaming(filterStreaming === true ? false : true)}
                         className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
-                          filterStreaming
+                          filterStreaming === true
                             ? "bg-primary/20 text-primary"
-                            : "text-muted-foreground hover:text-foreground"
+                            : !filterStreaming
+                              ? "text-muted-foreground hover:text-foreground"
+                              : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        My services
+                        All my services
                       </button>
+                      {myServices.map((s) => (
+                        <button
+                          key={s}
+                          onClick={() => setFilterStreaming(filterStreaming === s ? false : s)}
+                          className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
+                            filterStreaming === s
+                              ? "bg-primary/20 text-primary"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          {s}
+                        </button>
+                      ))}
                     </>
                   )}
 
