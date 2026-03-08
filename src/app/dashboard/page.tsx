@@ -103,6 +103,14 @@ export default function DashboardPage() {
   const [filterStreaming, setFilterStreaming] = useState<boolean | string>(false);
   const [filmProviders, setFilmProviders] = useState<Record<string, string[]>>({});
   const [showServicePicker, setShowServicePicker] = useState(false);
+  const [activity, setActivity] = useState<{
+    filmSlug: string;
+    filmTitle: string | null;
+    action: string;
+    rating: string | null;
+    actedAt: string | null;
+  }[]>([]);
+  const [activityExpanded, setActivityExpanded] = useState(false);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -121,6 +129,7 @@ export default function DashboardPage() {
         setUserData(data.user);
         setTwins(data.twins || []);
         setTopLoves(data.topLoves || []);
+        setActivity(data.activity || []);
       }
 
       if (prefsRes.ok) {
@@ -1179,6 +1188,48 @@ export default function DashboardPage() {
                   Generate recs to discover your taste twins.
                 </p>
               </div>
+            )}
+
+            {activity.length > 0 && (
+              <>
+                <Separator />
+                <div className="space-y-2">
+                  <button
+                    onClick={() => setActivityExpanded(!activityExpanded)}
+                    className="flex items-center gap-2 w-full"
+                  >
+                    <span className={`text-[10px] text-muted-foreground transition-transform ${activityExpanded ? "rotate-90" : ""}`}>
+                      ▶
+                    </span>
+                    <h3 className="font-mono text-xs tracking-wider text-muted-foreground">
+                      YOUR ACTIVITY ({activity.length})
+                    </h3>
+                  </button>
+
+                  {activityExpanded && (
+                    <div className="space-y-1 max-h-64 overflow-y-auto">
+                      {activity.map((a) => (
+                        <div
+                          key={a.filmSlug}
+                          className="flex items-center justify-between py-1.5 px-1 text-xs"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="shrink-0">
+                              {a.action === "seen" ? "✓" : a.action === "watchlisted" ? "+" : "✕"}
+                            </span>
+                            <span className="truncate">{a.filmTitle || a.filmSlug}</span>
+                          </div>
+                          {a.rating && (
+                            <span className="font-mono text-primary shrink-0 ml-2">
+                              {a.rating}★
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>

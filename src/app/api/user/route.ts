@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { users, ratings, tasteMatches, profiles } from "@/lib/db/schema";
+import { users, ratings, tasteMatches, profiles, userFilmActions } from "@/lib/db/schema";
 import { eq, desc, sql } from "drizzle-orm";
 
 export async function GET() {
@@ -96,6 +96,18 @@ export async function GET() {
       totalFilmsOnLetterboxd = profile?.totalFilms ?? null;
     }
 
+    const activityRows = await db
+      .select({
+        filmSlug: userFilmActions.filmSlug,
+        filmTitle: userFilmActions.filmTitle,
+        action: userFilmActions.action,
+        rating: userFilmActions.rating,
+        actedAt: userFilmActions.actedAt,
+      })
+      .from(userFilmActions)
+      .where(eq(userFilmActions.userId, user.id))
+      .orderBy(desc(userFilmActions.actedAt));
+
     return NextResponse.json({
       user: {
         id: user.id,
@@ -111,6 +123,7 @@ export async function GET() {
       topLoves,
       topHates,
       twins,
+      activity: activityRows,
     });
   } catch (error) {
     console.error("User API error:", error);
