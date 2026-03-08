@@ -106,7 +106,7 @@ export async function recomputeTasteMatches(
 export async function generateRecommendations(
   userProfileId: string,
   userId: string,
-  topN: number = 200
+  topN: number = 5000
 ): Promise<CandidateFilm[]> {
   const topMatches = await db
     .select({
