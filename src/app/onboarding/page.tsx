@@ -7,47 +7,36 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import JSZip from "jszip";
 
-type Phase = "checking" | "input" | "scraping" | "importing" | "complete" | "error";
+type Phase =
+  | "checking"
+  | "username"
+  | "connecting"
+  | "choose"
+  | "scraping"
+  | "importing"
+  | "complete"
+  | "error";
 
-/**
- * Given any combination of files (a ZIP, a CSV, or a folder of files),
- * find and return the text content of ratings.csv.
- */
 async function findRatingsCsv(files: FileList | File[]): Promise<string | null> {
   const fileArray = Array.from(files);
-
   for (const file of fileArray) {
-    // Direct ratings.csv (from folder drop or file picker)
-    if (file.name.toLowerCase() === "ratings.csv") {
-      return file.text();
-    }
-
-    // ZIP file — extract ratings.csv from inside
+    if (file.name.toLowerCase() === "ratings.csv") return file.text();
     if (file.name.endsWith(".zip")) {
       try {
         const zip = await JSZip.loadAsync(file);
-        const ratingsFile =
-          zip.file("ratings.csv") ??
-          zip.file(/ratings\.csv$/i)[0] ??
-          null;
-        if (ratingsFile) return ratingsFile.async("text");
+        const r = zip.file("ratings.csv") ?? zip.file(/ratings\.csv$/i)[0] ?? null;
+        if (r) return r.async("text");
       } catch {}
     }
   }
-
-  // If multiple files dropped (folder), look for any .csv that has the right header
   for (const file of fileArray) {
-    if (file.name.endsWith(".csv") && file.name.toLowerCase() !== "ratings.csv") {
+    if (file.name.endsWith(".csv")) {
       const text = await file.text();
-      if (text.startsWith("Date,Name,Year,Letterboxd URI,Rating")) {
-        return text;
-      }
+      if (text.includes("Letterboxd URI") && text.includes("Rating")) return text;
     }
   }
-
   return null;
 }
 
@@ -60,6 +49,7 @@ export default function OnboardingPage() {
   const [scrapedCount, setScrapedCount] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
   const [totalRated, setTotalRated] = useState(0);
+  const [totalFilmsOnProfile, setTotalFilmsOnProfile] = useState(0);
   const [avgRating, setAvgRating] = useState("0");
   const [displayName, setDisplayName] = useState("");
   const [importCount, setImportCount] = useState(0);
@@ -80,26 +70,76 @@ export default function OnboardingPage() {
           }
         }
       } catch {}
-      setPhase("input");
+      setPhase("username");
     }
     checkStatus();
   }, [status, router]);
 
-  const processFiles = useCallback(async (files: FileList | File[]) => {
-    if (!username.trim()) {
-      setError("Enter your Letterboxd username first");
-      return;
-    }
+  // Step 1: Connect username + auto-scrape RSS
+  async function handleConnect(e: React.FormEvent) {
+    e.preventDefault();
+    if (!username.trim()) return;
+    setError("");
+    setPhase("connecting");
+    abortRef.current = false;
 
+    const trimmedUsername = username.trim();
+    let page = 1;
+    let lastTotalRated = 0;
+
+    try {
+      while (!abortRef.current) {
+        const res = await fetch("/api/scrape", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: trimmedUsername, page }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          setError(data.error || "Username not found on Letterboxd");
+          setPhase("username");
+          return;
+        }
+
+        lastTotalRated = data.totalRatedSoFar;
+        setScrapedCount(data.totalRatedSoFar);
+        setCurrentPage(page);
+        setAvgRating(data.avgRating);
+
+        if (data.done) break;
+        page++;
+      }
+
+      // Fetch the full profile stats to get totalFilmsOnLetterboxd
+      const userRes = await fetch("/api/user");
+      if (userRes.ok) {
+        const userData = await userRes.json();
+        setDisplayName(userData.user.displayName || trimmedUsername);
+        setTotalFilmsOnProfile(userData.user.totalFilmsOnLetterboxd || 0);
+      }
+
+      setTotalRated(lastTotalRated);
+
+      // Go to the "choose" phase where they see the gap
+      setPhase("choose");
+    } catch {
+      setError("Network error — try again");
+      setPhase("username");
+    }
+  }
+
+  // Step 2 option: Upload export data
+  const processFiles = useCallback(async (files: FileList | File[]) => {
     setError("");
     setPhase("importing");
 
     try {
       const csvText = await findRatingsCsv(files);
-
       if (!csvText) {
-        setError("No ratings.csv found. Drop the Letterboxd export folder, ZIP, or the ratings.csv file.");
-        setPhase("error");
+        setError("No ratings.csv found. Drop the Letterboxd export folder, ZIP, or ratings.csv.");
+        setPhase("choose");
         return;
       }
 
@@ -115,7 +155,7 @@ export default function OnboardingPage() {
 
       if (!res.ok) {
         setError(data.error || "Failed to import");
-        setPhase("error");
+        setPhase("choose");
         return;
       }
 
@@ -126,9 +166,27 @@ export default function OnboardingPage() {
       setPhase("complete");
     } catch {
       setError("Failed to process files — try again");
-      setPhase("error");
+      setPhase("choose");
     }
   }, [username]);
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    const items = e.dataTransfer.items;
+    if (items && items.length > 0) {
+      const entries: FileSystemEntry[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const entry = items[i].webkitGetAsEntry?.();
+        if (entry) entries.push(entry);
+      }
+      if (entries.some((en) => en.isDirectory)) {
+        Promise.all(entries.map(collectFiles)).then((results) => processFiles(results.flat()));
+        return;
+      }
+    }
+    if (e.dataTransfer.files.length > 0) processFiles(e.dataTransfer.files);
+  }
 
   if (status === "loading" || phase === "checking") {
     return (
@@ -143,86 +201,10 @@ export default function OnboardingPage() {
     return null;
   }
 
-  async function handleScrape(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setPhase("scraping");
-    setScrapedCount(0);
-    setCurrentPage(0);
-    abortRef.current = false;
-
-    const trimmedUsername = username.trim();
-    let page = 1;
-
-    try {
-      while (!abortRef.current) {
-        const res = await fetch("/api/scrape", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: trimmedUsername, page }),
-        });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-          setError(data.error || "Failed to scrape profile");
-          setPhase("error");
-          return;
-        }
-
-        setScrapedCount(data.totalRatedSoFar);
-        setCurrentPage(page);
-        setAvgRating(data.avgRating);
-
-        if (data.done) {
-          setTotalRated(data.totalRatedSoFar);
-          try {
-            const userRes = await fetch("/api/user");
-            if (userRes.ok) {
-              const userData = await userRes.json();
-              setDisplayName(userData.user.displayName || trimmedUsername);
-            }
-          } catch {}
-          setPhase("complete");
-          return;
-        }
-
-        page++;
-      }
-    } catch {
-      setError("Network error — try again");
-      setPhase("error");
-    }
-  }
-
-  function handleDrop(e: React.DragEvent) {
-    e.preventDefault();
-    setDragging(false);
-
-    const items = e.dataTransfer.items;
-    if (items && items.length > 0) {
-      const files: File[] = [];
-      const entries: FileSystemEntry[] = [];
-
-      for (let i = 0; i < items.length; i++) {
-        const entry = items[i].webkitGetAsEntry?.();
-        if (entry) entries.push(entry);
-      }
-
-      if (entries.some((e) => e.isDirectory)) {
-        // Folder drop — recursively collect files
-        const promises = entries.map((entry) => collectFiles(entry));
-        Promise.all(promises).then((results) => {
-          processFiles(results.flat());
-        });
-        return;
-      }
-    }
-
-    if (e.dataTransfer.files.length > 0) {
-      processFiles(e.dataTransfer.files);
-    }
-  }
+  const syncGap = totalFilmsOnProfile > 0 && totalRated < totalFilmsOnProfile;
+  const syncPercent = totalFilmsOnProfile > 0
+    ? Math.round((totalRated / totalFilmsOnProfile) * 100)
+    : 100;
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4">
@@ -232,100 +214,43 @@ export default function OnboardingPage() {
           <h1 className="text-2xl font-bold">Connect your Letterboxd</h1>
         </div>
 
-        {phase === "input" && (
+        {/* Step 1: Enter username */}
+        {phase === "username" && (
           <Card>
             <CardHeader className="pb-4">
-              <CardTitle className="text-base">Letterboxd username</CardTitle>
+              <CardTitle className="text-base">What&apos;s your Letterboxd username?</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="space-y-2">
-                <Label htmlFor="username">Username</Label>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground font-mono">letterboxd.com/</span>
-                  <Input
-                    id="username"
-                    placeholder="yourname"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    required
-                    className="font-mono"
-                  />
+            <CardContent>
+              <form onSubmit={handleConnect} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="username">Username</Label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground font-mono">letterboxd.com/</span>
+                    <Input
+                      id="username"
+                      placeholder="yourname"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      required
+                      className="font-mono"
+                    />
+                  </div>
                 </div>
-              </div>
-
-              {error && <p className="text-sm text-destructive">{error}</p>}
-
-              <div className="space-y-3">
-                <div
-                  onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-                  onDragLeave={() => setDragging(false)}
-                  onDrop={handleDrop}
-                  onClick={() => username.trim() && fileInputRef.current?.click()}
-                  className={`
-                    border-2 border-dashed rounded-lg p-6 text-center cursor-pointer
-                    transition-colors duration-200
-                    ${dragging
-                      ? "border-primary bg-primary/10"
-                      : "border-border/50 hover:border-primary/40"
-                    }
-                    ${!username.trim() ? "opacity-50 cursor-not-allowed" : ""}
-                  `}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".csv,.zip"
-                    onChange={(e) => e.target.files && processFiles(e.target.files)}
-                    className="hidden"
-                    // @ts-expect-error — webkitdirectory is a valid HTML attribute
-                    webkitdirectory=""
-                    multiple
-                  />
-                  <p className="text-sm font-medium mb-1">
-                    {dragging ? "Drop it here" : "Drop your Letterboxd export"}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Folder, .zip, or ratings.csv — we&apos;ll find what we need
-                  </p>
-                </div>
-
-                <p className="text-xs text-muted-foreground text-center">
-                  Get your export from{" "}
-                  <a
-                    href="https://letterboxd.com/settings/data/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    letterboxd.com/settings/data
-                  </a>
-                </p>
-
-                <div className="relative py-1">
-                  <Separator />
-                  <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-2 text-xs text-muted-foreground">
-                    or quick start
-                  </span>
-                </div>
-
-                <Button
-                  variant="outline"
-                  onClick={handleScrape}
-                  className="w-full font-mono text-sm"
-                  disabled={!username.trim()}
-                >
-                  SYNC VIA RSS (diary entries only)
+                {error && <p className="text-sm text-destructive">{error}</p>}
+                <Button type="submit" className="w-full font-mono text-sm" disabled={!username.trim()}>
+                  CONNECT
                 </Button>
-              </div>
+              </form>
             </CardContent>
           </Card>
         )}
 
-        {phase === "scraping" && (
+        {/* Connecting: auto-syncing RSS */}
+        {phase === "connecting" && (
           <Card>
             <CardContent className="pt-6 space-y-4">
               <div className="space-y-3">
-                <p className="text-sm font-mono text-primary">Scraping {username}...</p>
+                <p className="text-sm font-mono text-primary">Connecting {username}...</p>
                 <div className="h-1.5 w-full bg-secondary rounded-full overflow-hidden">
                   <div
                     className="h-full bg-primary rounded-full transition-all duration-500"
@@ -333,14 +258,111 @@ export default function OnboardingPage() {
                   />
                 </div>
                 <div className="flex justify-between text-xs text-muted-foreground font-mono">
-                  <span>Page {currentPage || "..."}</span>
-                  <span>{scrapedCount} rated films found</span>
+                  <span>Pulling your ratings...</span>
+                  <span>{scrapedCount} found</span>
                 </div>
               </div>
             </CardContent>
           </Card>
         )}
 
+        {/* Step 2: Show what we got and let them choose */}
+        {phase === "choose" && (
+          <div className="space-y-4">
+            <Card>
+              <CardContent className="pt-6 space-y-4">
+                <div className="text-center space-y-1">
+                  <p className="text-lg font-bold">{displayName || username}</p>
+                  <p className="text-sm text-muted-foreground">Connected to Letterboxd</p>
+                </div>
+
+                <div className="bg-secondary/30 rounded-lg p-4 space-y-2">
+                  <div className="flex justify-between items-baseline">
+                    <span className="font-mono text-2xl text-primary">{totalRated}</span>
+                    {totalFilmsOnProfile > 0 && (
+                      <span className="text-sm text-muted-foreground">
+                        of {totalFilmsOnProfile} films on your profile
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">rated films synced automatically</p>
+
+                  {syncGap && (
+                    <div className="space-y-1.5 pt-2 border-t border-border/30">
+                      <div className="h-1.5 w-full bg-secondary rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-primary/60 rounded-full"
+                          style={{ width: `${syncPercent}%` }}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Letterboxd&apos;s RSS feed only includes a portion of your data.
+                        This isn&apos;t something you can control — it&apos;s a platform limitation.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {error && <p className="text-sm text-destructive">{error}</p>}
+
+                <div className="space-y-3">
+                  <Button
+                    onClick={() => router.push("/dashboard")}
+                    variant={syncGap ? "outline" : "default"}
+                    className="w-full font-mono text-sm"
+                  >
+                    {syncGap
+                      ? `GET RECS FROM THIS SNAPSHOT (${syncPercent}%)`
+                      : "FIND MY TASTE TWINS →"}
+                  </Button>
+
+                  {syncGap && (
+                    <>
+                      <div
+                        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+                        onDragLeave={() => setDragging(false)}
+                        onDrop={handleDrop}
+                        onClick={() => fileInputRef.current?.click()}
+                        className={`
+                          border-2 border-dashed rounded-lg p-5 text-center cursor-pointer
+                          transition-colors duration-200
+                          ${dragging ? "border-primary bg-primary/10" : "border-primary/40 hover:border-primary/60"}
+                        `}
+                      >
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept=".csv,.zip"
+                          onChange={(e) => e.target.files && processFiles(e.target.files)}
+                          className="hidden"
+                          multiple
+                        />
+                        <p className="text-sm font-bold text-primary mb-1">
+                          Upload full data for the best recs
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Export from{" "}
+                          <a
+                            href="https://letterboxd.com/settings/data/"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-primary hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            letterboxd.com/settings/data
+                          </a>
+                          {" "}→ drop the .zip or folder here
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Importing */}
         {phase === "importing" && (
           <Card>
             <CardContent className="pt-6 space-y-3">
@@ -355,13 +377,14 @@ export default function OnboardingPage() {
           </Card>
         )}
 
+        {/* Error */}
         {phase === "error" && (
           <Card>
             <CardContent className="pt-6 space-y-4">
               <p className="text-sm text-destructive">{error}</p>
               <Button
                 variant="outline"
-                onClick={() => { setPhase("input"); setError(""); }}
+                onClick={() => { setPhase("username"); setError(""); }}
                 className="w-full font-mono text-sm"
               >
                 TRY AGAIN
@@ -370,6 +393,7 @@ export default function OnboardingPage() {
           </Card>
         )}
 
+        {/* Complete */}
         {phase === "complete" && (
           <Card>
             <CardContent className="pt-6 space-y-6">
@@ -402,6 +426,19 @@ export default function OnboardingPage() {
             </CardContent>
           </Card>
         )}
+
+        {/* Scraping (legacy, kept for re-sync flows) */}
+        {phase === "scraping" && (
+          <Card>
+            <CardContent className="pt-6 space-y-3">
+              <p className="text-sm font-mono text-primary">Syncing {username}...</p>
+              <div className="flex justify-between text-xs text-muted-foreground font-mono">
+                <span>Page {currentPage || "..."}</span>
+                <span>{scrapedCount} rated films found</span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
@@ -417,11 +454,8 @@ interface FileSystemEntry {
 
 async function collectFiles(entry: FileSystemEntry): Promise<File[]> {
   if (entry.isFile && entry.file) {
-    return new Promise((resolve) => {
-      entry.file!((file) => resolve([file]));
-    });
+    return new Promise((resolve) => { entry.file!((file) => resolve([file])); });
   }
-
   if (entry.isDirectory && entry.createReader) {
     return new Promise((resolve) => {
       const reader = entry.createReader!();
@@ -431,6 +465,5 @@ async function collectFiles(entry: FileSystemEntry): Promise<File[]> {
       });
     });
   }
-
   return [];
 }
