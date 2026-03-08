@@ -823,24 +823,34 @@ export default function DashboardPage() {
                     </div>
                     {searchResult.tasteMatch ? (
                       <div className="bg-secondary/50 rounded-lg p-3 space-y-1">
-                        <div className="flex justify-between">
-                          <span className="text-xs text-muted-foreground">
-                            Taste score
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs font-mono tracking-wide" style={{
+                            color: searchResult.tasteMatch.score >= 1.5 ? "var(--primary)" : undefined
+                          }}>
+                            {searchResult.tasteMatch.score >= 2.5 ? "Soulmate" :
+                             searchResult.tasteMatch.score >= 2.0 ? "Twin" :
+                             searchResult.tasteMatch.score >= 1.5 ? "Strong match" :
+                             searchResult.tasteMatch.score >= 1.0 ? "Good match" :
+                             searchResult.tasteMatch.score >= 0.5 ? "Mild match" : "Loose match"}
                           </span>
-                          <span className="font-mono text-sm text-primary">
-                            {searchResult.tasteMatch.score.toFixed(2)}
+                          <span className="text-[10px] font-mono text-muted-foreground">
+                            {Math.round(((searchResult.tasteMatch.sharedLoves + searchResult.tasteMatch.sharedHates) / Math.max(searchResult.tasteMatch.overlapCount, 1)) * 100)}% aligned
                           </span>
                         </div>
                         <div className="flex gap-3 text-[10px] text-muted-foreground font-mono">
                           <span>
-                            {searchResult.tasteMatch.overlapCount} overlap
+                            {searchResult.tasteMatch.overlapCount} shared films
                           </span>
-                          <span className="text-primary">
-                            ♥ {searchResult.tasteMatch.sharedLoves}
-                          </span>
-                          <span className="text-destructive">
-                            ✕ {searchResult.tasteMatch.sharedHates}
-                          </span>
+                          {searchResult.tasteMatch.sharedLoves > 0 && (
+                            <span className="text-primary">
+                              ♥ {searchResult.tasteMatch.sharedLoves} loved
+                            </span>
+                          )}
+                          {searchResult.tasteMatch.sharedHates > 0 && (
+                            <span className="text-destructive">
+                              ✕ {searchResult.tasteMatch.sharedHates} hated
+                            </span>
+                          )}
                         </div>
                       </div>
                     ) : (
