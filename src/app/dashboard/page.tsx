@@ -49,9 +49,9 @@ type GeneratingPhase = null | "seeding" | "recomputing" | "scoring" | "done";
 type DiscoveryDepth = "quick" | "deep" | "full";
 
 const DEPTH_CONFIG = {
-  quick: { filmPages: 5, maxQueue: 10, label: "Quick", desc: "~1 min", detail: "Top 5 films, 10 profiles" },
-  deep:  { filmPages: 30, maxQueue: 50, label: "Deep", desc: "~5 min", detail: "Top 30 films, 50 profiles" },
-  full:  { filmPages: Infinity, maxQueue: Infinity, label: "Full scan", desc: "10-20 min", detail: "Every film, every profile" },
+  quick: { filmPages: 10, maxQueue: 25, label: "Quick", desc: "~3 min", detail: "Top 10 films, 25 profiles" },
+  deep:  { filmPages: 30, maxQueue: 75, label: "Deep", desc: "~10 min", detail: "Top 30 films, 75 profiles" },
+  full:  { filmPages: Infinity, maxQueue: Infinity, label: "Full scan", desc: "15-30 min", detail: "Every film, every profile" },
 } as const;
 
 export default function DashboardPage() {
@@ -240,7 +240,7 @@ export default function DashboardPage() {
         const res = await fetch("/api/discover", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "process", count: 3 }),
+          body: JSON.stringify({ action: "process", count: 2 }),
         });
         const data = await res.json();
 
@@ -306,9 +306,13 @@ export default function DashboardPage() {
           setTwins(ud.twins || []);
         }
       } else if (data.needsRecompute) {
-        toast.error("Not enough overlap. Try a deeper scan.");
+        toast.error(
+          "Not enough taste twin overlap found. Try a deeper scan, or upload your Letterboxd export (Settings → Import & Export → Export Your Data) for more complete ratings data."
+        );
       } else {
-        toast.error(data.error || "No recommendations generated");
+        toast.error(
+          data.error || "No recommendations generated — try uploading your Letterboxd CSV export for better results."
+        );
       }
     } catch {
       toast.error("Network error generating recommendations");
@@ -750,6 +754,19 @@ export default function DashboardPage() {
                       ? ` ${poolSize} profiles already in the pool.`
                       : ""}
                   </p>
+                  <p className="text-xs text-muted-foreground/70 mt-1">
+                    Tip: For the best results,{" "}
+                    <a
+                      href="https://letterboxd.com/settings/data/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      export your Letterboxd data
+                    </a>{" "}
+                    and upload it above — the RSS feed only captures diary entries, so ratings
+                    without diary logs are missed.
+                  </p>
                 </CardContent>
               </Card>
             )}
@@ -855,7 +872,7 @@ export default function DashboardPage() {
                       </div>
                     ) : (
                       <p className="text-xs text-muted-foreground">
-                        Not enough overlap (need 5+ shared rated films).
+                        Not enough overlap (need 10+ shared rated films).
                       </p>
                     )}
                   </div>

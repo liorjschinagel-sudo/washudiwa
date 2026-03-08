@@ -238,13 +238,15 @@ export async function discoverFromFilmPage(filmSlug: string): Promise<string[]> 
 }
 
 /**
- * Quick-scrapes a user: only the first N RSS pages (default 3).
- * Gets ~180 rated films max — enough for taste matching without
- * spending 2 minutes scraping a mega-collector's full history.
+ * Quick-scrapes a user's RSS feed until we have enough rated films.
+ * The RSS feed returns ~100 diary entries per page, but only ~30% have
+ * ratings. We keep paginating until we reach minRatings rated films or
+ * exhaust available pages (capped at maxPages to avoid scraping forever).
  */
 export async function quickScrapeUserRatings(
   username: string,
-  maxPages: number = 3
+  minRatings: number = 150,
+  maxPages: number = 15
 ): Promise<ScrapedRating[]> {
   const allRatings: ScrapedRating[] = [];
   const seenSlugs = new Set<string>();
@@ -283,6 +285,7 @@ export async function quickScrapeUserRatings(
     });
 
     if (items.length < 100) break;
+    if (allRatings.length >= minRatings) break;
     await sleep(800);
   }
 

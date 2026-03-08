@@ -18,7 +18,7 @@ export function computeTasteTwinScore(
     if (otherFilms.has(film)) overlapFilms.push(film);
   }
 
-  if (overlapFilms.length < 5) return null;
+  if (overlapFilms.length < 10) return null;
 
   let totalScore = 0;
   let sharedLoves = 0;

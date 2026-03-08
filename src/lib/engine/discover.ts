@@ -8,7 +8,7 @@ import {
   scrapeProfileStats,
 } from "@/lib/scraper/letterboxd";
 
-const MIN_RATINGS_FOR_TWIN = 10;
+const MIN_RATINGS_FOR_TWIN = 30;
 
 /**
  * Discovery Phase 1: finds new Letterboxd usernames from the user's films.
