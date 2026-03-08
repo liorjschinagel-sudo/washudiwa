@@ -87,6 +87,7 @@ export default function DashboardPage() {
   const [dragOver, setDragOver] = useState(false);
   const [recsExpanded, setRecsExpanded] = useState(true);
   const [showDepthPicker, setShowDepthPicker] = useState(false);
+  const [eta, setEta] = useState<string | null>(null);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -170,6 +171,13 @@ export default function DashboardPage() {
     return null;
   }
 
+  function formatEta(seconds: number): string {
+    if (seconds < 60) return `~${Math.ceil(seconds)}s left`;
+    const m = Math.floor(seconds / 60);
+    const s = Math.ceil(seconds % 60);
+    return s > 0 ? `~${m}m ${s}s left` : `~${m}m left`;
+  }
+
   async function handleGenerateRecs(depth: DiscoveryDepth = "deep") {
     abortRef.current = false;
     setShowDepthPicker(false);
@@ -177,12 +185,14 @@ export default function DashboardPage() {
 
     // Phase 1: Crawl films for user discovery
     setGeneratingPhase("seeding");
+    setEta(null);
     setSeedProgress(`${config.label} scan — discovering taste twin candidates...`);
 
     let filmOffset = 0;
     let totalDiscovered = 0;
     let totalTopFilms = 0;
     let filmsCrawled = 0;
+    const crawlStart = Date.now();
 
     while (!abortRef.current) {
       try {
@@ -198,8 +208,17 @@ export default function DashboardPage() {
         filmOffset += data.filmsScanned;
         filmsCrawled += data.filmsScanned;
 
+        const targetFilms = Math.min(config.filmPages, totalTopFilms);
+        const crawlElapsed = (Date.now() - crawlStart) / 1000;
+        const crawlRate = filmsCrawled / Math.max(crawlElapsed, 1);
+        const filmsLeft = targetFilms - filmsCrawled;
+        const crawlEtaSec = filmsLeft / Math.max(crawlRate, 0.1);
+        // Rough estimate: scraping takes ~8s per profile, ~60% of discovered survive
+        const scrapeEtaSec = Math.min(totalDiscovered * 0.6, config.maxQueue) * 8;
+        setEta(formatEta(crawlEtaSec + scrapeEtaSec + 30));
+
         setSeedProgress(
-          `Crawled ${filmOffset} of ${Math.min(config.filmPages, totalTopFilms)} films — ${totalDiscovered} new profiles found`
+          `Crawled ${filmOffset} of ${targetFilms} films — ${totalDiscovered} new profiles found`
         );
         setPoolSize(data.poolSize);
 
@@ -209,10 +228,12 @@ export default function DashboardPage() {
       }
     }
 
-    if (abortRef.current) { setGeneratingPhase(null); return; }
+    if (abortRef.current) { setGeneratingPhase(null); setEta(null); return; }
 
     // Phase 2: Quick-scrape queued profiles (up to maxQueue)
     let scraped = 0;
+    const scrapeStart = Date.now();
+    let queueTotal = 0;
 
     while (!abortRef.current) {
       try {
@@ -225,7 +246,16 @@ export default function DashboardPage() {
 
         if (data.queueRemaining === 0 && data.processed === 0) break;
 
-        scraped += data.processed;
+        scraped += data.processed + data.skipped;
+        if (queueTotal === 0) queueTotal = scraped + data.queueRemaining;
+
+        // Live ETA based on actual scrape rate
+        const scrapeElapsed = (Date.now() - scrapeStart) / 1000;
+        const scrapeRate = scraped / Math.max(scrapeElapsed, 1);
+        const remaining = Math.min(data.queueRemaining, config.maxQueue - scraped);
+        const scrapeEtaSec = remaining / Math.max(scrapeRate, 0.05);
+        setEta(formatEta(scrapeEtaSec + 30));
+
         const names = data.details?.filter((d: string) => !d.includes("skipped") && !d.includes("error")).join(", ") ?? "";
         setSeedProgress(
           `${data.poolSize} profiles scraped, ${data.queueRemaining} queued${names ? ` — ${names}` : ""}`
@@ -239,10 +269,11 @@ export default function DashboardPage() {
       }
     }
 
-    if (abortRef.current) { setGeneratingPhase(null); return; }
+    if (abortRef.current) { setGeneratingPhase(null); setEta(null); return; }
 
     // Phase 3: Compute taste matches
     setGeneratingPhase("recomputing");
+    setEta(formatEta(Math.max(poolSize * 0.3, 10)));
     try {
       const res = await fetch("/api/recompute", { method: "POST" });
       if (!res.ok) {
@@ -256,10 +287,11 @@ export default function DashboardPage() {
       return;
     }
 
-    if (abortRef.current) { setGeneratingPhase(null); return; }
+    if (abortRef.current) { setGeneratingPhase(null); setEta(null); return; }
 
     // Phase 4: Generate recommendations
     setGeneratingPhase("scoring");
+    setEta("~10s left");
     try {
       const res = await fetch("/api/recommendations", { method: "POST" });
       const data = await res.json();
@@ -283,6 +315,7 @@ export default function DashboardPage() {
     }
 
     setGeneratingPhase(null);
+    setEta(null);
   }
 
   async function handleResync() {
@@ -504,18 +537,6 @@ export default function DashboardPage() {
     }
   }
 
-  function getTimeEstimate() {
-    switch (generatingPhase) {
-      case "seeding":
-        return "~5-10 min total";
-      case "recomputing":
-        return "~30 sec";
-      case "scoring":
-        return "almost done";
-      default:
-        return undefined;
-    }
-  }
 
   return (
     <div className="min-h-screen">
@@ -711,7 +732,7 @@ export default function DashboardPage() {
                   stepLabel={getPhaseLabel()}
                   stepDescription={getPhaseDescription()}
                   detail={generatingPhase === "seeding" ? seedProgress : undefined}
-                  timeEstimate={getTimeEstimate()}
+                  timeEstimate={eta ?? undefined}
                 />
               </div>
             )}
