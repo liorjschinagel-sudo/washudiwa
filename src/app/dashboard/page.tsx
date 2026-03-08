@@ -12,6 +12,7 @@ import { TwinCard } from "@/components/twin-card";
 import { LoadingAnimation } from "@/components/loading-animation";
 import { toast } from "sonner";
 import JSZip from "jszip";
+import { BlinkingEye } from "@/components/blinking-eye";
 
 interface Recommendation {
   id: number;
@@ -812,7 +813,7 @@ export default function DashboardPage() {
 
             {backgroundUpdating && (
               <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-secondary/50 border border-border/50">
-                <div className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+                <BlinkingEye className="w-4 h-2.5" />
                 <p className="text-xs font-mono text-muted-foreground">
                   Updating taste index in the background...
                 </p>
@@ -825,7 +826,7 @@ export default function DashboardPage() {
                   onClick={() => setProgressMinimized(false)}
                   className="w-full flex items-center gap-3 px-4 py-2 rounded-lg bg-secondary/40 border border-border/50 hover:bg-secondary/60 transition-colors"
                 >
-                  <div className="h-2 w-2 rounded-full bg-primary animate-pulse shrink-0" />
+                  <BlinkingEye className="w-5 h-3" />
                   <p className="text-xs font-mono text-muted-foreground flex-1 text-left truncate">
                     {seedProgress || getPhaseLabel()}
                   </p>
@@ -841,9 +842,9 @@ export default function DashboardPage() {
                   <CardContent className="pt-5 pb-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-                        <p className="text-sm font-mono text-primary">
-                          {getPhaseLabel()}
+                      <BlinkingEye className="w-5 h-3" />
+                    <p className="text-sm font-mono text-primary">
+                      {getPhaseLabel()}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
