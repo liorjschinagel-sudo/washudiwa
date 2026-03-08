@@ -47,7 +47,7 @@ export function FilmCard({
   const [exiting, setExiting] = useState(false);
 
   useEffect(() => {
-    if (expanded && !meta && !metaLoading) {
+    if (!meta && !metaLoading) {
       setMetaLoading(true);
       const params = new URLSearchParams({ title: filmTitle });
       if (filmYear) params.set("year", filmYear);
@@ -58,7 +58,7 @@ export function FilmCard({
         .catch(() => {})
         .finally(() => setMetaLoading(false));
     }
-  }, [expanded, meta, metaLoading, filmTitle, filmYear]);
+  }, [filmTitle, filmYear]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleAction(action: string, rating?: number) {
     setExiting(true);
@@ -126,7 +126,7 @@ export function FilmCard({
 
       {/* Expanded: full details */}
       {expanded && (
-        <div className="px-4 pb-4 pt-1 space-y-4">
+        <div className="px-4 pb-4 pt-1 space-y-4" onClick={(e) => e.stopPropagation()}>
           <div className="flex gap-4">
             {/* Larger poster */}
             {meta?.posterUrl && (
