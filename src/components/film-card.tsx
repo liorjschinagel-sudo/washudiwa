@@ -31,7 +31,7 @@ interface FilmCardProps {
   hidden?: boolean;
 }
 
-const STAR_VALUES = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
+const HALF_STARS = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
 
 export function FilmCard({
   filmTitle,
@@ -227,23 +227,34 @@ export function FilmCard({
           {/* Actions */}
           {showRating ? (
             <div className="space-y-2">
-              <p className="text-xs text-muted-foreground">Your rating:</p>
-              <div className="flex gap-1">
-                {STAR_VALUES.map((val) => (
-                  <button
-                    key={val}
-                    onMouseEnter={() => setHoveredStar(val)}
-                    onMouseLeave={() => setHoveredStar(null)}
-                    onClick={() => handleAction("seen", val)}
-                    className={`text-base transition-colors px-0.5 ${
-                      hoveredStar !== null && val <= hoveredStar
-                        ? "text-primary"
-                        : "text-muted-foreground/30"
-                    }`}
-                  >
-                    ★
-                  </button>
-                ))}
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-muted-foreground">Your rating:</p>
+                {hoveredStar !== null && (
+                  <span className="text-xs font-mono text-primary">{hoveredStar}★</span>
+                )}
+              </div>
+              <div className="flex gap-0">
+                {HALF_STARS.map((val) => {
+                  const isHalf = val % 1 !== 0;
+                  const lit = hoveredStar !== null && val <= hoveredStar;
+                  return (
+                    <button
+                      key={val}
+                      onMouseEnter={() => setHoveredStar(val)}
+                      onMouseLeave={() => setHoveredStar(null)}
+                      onClick={() => handleAction("seen", val)}
+                      className={`transition-colors ${isHalf ? "w-3" : "w-3"} text-sm leading-none overflow-hidden ${
+                        lit ? "text-primary" : "text-muted-foreground/20"
+                      }`}
+                      style={{
+                        clipPath: isHalf ? "inset(0 50% 0 0)" : "inset(0 0 0 50%)",
+                        marginRight: isHalf ? "-3px" : "2px",
+                      }}
+                    >
+                      ★
+                    </button>
+                  );
+                })}
               </div>
               <button
                 onClick={() => handleAction("seen")}
