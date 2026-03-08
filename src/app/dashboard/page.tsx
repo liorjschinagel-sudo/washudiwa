@@ -89,6 +89,8 @@ export default function DashboardPage() {
   const [showDepthPicker, setShowDepthPicker] = useState(false);
   const [eta, setEta] = useState<string | null>(null);
   const [progressMinimized, setProgressMinimized] = useState(false);
+  const [sortBy, setSortBy] = useState<"score" | "confidence" | "title" | "year" | "twins">("score");
+  const [filterConfidence, setFilterConfidence] = useState<string | null>(null);
   const [interimAvailable, setInterimAvailable] = useState(false);
 
   const fetchAll = useCallback(async () => {
@@ -539,6 +541,27 @@ export default function DashboardPage() {
 
   const isGenerating = generatingPhase !== null;
 
+  const sortedRecs = [...recs]
+    .filter((r) => !filterConfidence || r.confidence === filterConfidence)
+    .sort((a, b) => {
+      switch (sortBy) {
+        case "score":
+          return parseFloat(b.predictedScore ?? "0") - parseFloat(a.predictedScore ?? "0");
+        case "confidence": {
+          const order = { "HIGH MATCH": 0, "LIKELY": 1, "WILD CARD": 2 };
+          return (order[a.confidence as keyof typeof order] ?? 3) - (order[b.confidence as keyof typeof order] ?? 3);
+        }
+        case "title":
+          return (a.filmTitle ?? "").localeCompare(b.filmTitle ?? "");
+        case "year":
+          return (b.filmYear ?? "0").localeCompare(a.filmYear ?? "0");
+        case "twins":
+          return parseInt(b.reason?.match(/^(\d+)/)?.[1] ?? "0") - parseInt(a.reason?.match(/^(\d+)/)?.[1] ?? "0");
+        default:
+          return 0;
+      }
+    });
+
   function getPhaseLabel() {
     switch (generatingPhase) {
       case "seeding":
@@ -700,7 +723,7 @@ export default function DashboardPage() {
                     Your Recommendations
                     {recs.length > 0 && (
                       <span className="text-base font-normal text-muted-foreground ml-2">
-                        ({recs.length})
+                        {filterConfidence ? `${sortedRecs.length} of ${recs.length}` : `(${recs.length})`}
                       </span>
                     )}
                   </h1>
@@ -843,29 +866,90 @@ export default function DashboardPage() {
               </Card>
             )}
 
-            {recsExpanded && (
-              <div className="divide-y divide-border/30">
-                {recs.map((rec) => (
-                  <FilmCard
-                    key={rec.id}
-                    filmTitle={rec.filmTitle}
-                    filmYear={rec.filmYear}
-                    filmSlug={rec.filmSlug}
-                    predictedScore={rec.predictedScore}
-                    confidence={rec.confidence}
-                    reason={rec.reason}
-                    onAction={(action, rating) =>
-                      handleAction(
-                        rec.id,
-                        rec.filmSlug || "",
-                        rec.filmTitle,
-                        action,
-                        rating
-                      )
-                    }
-                  />
-                ))}
-              </div>
+            {recsExpanded && recs.length > 0 && (
+              <>
+                {/* Sort & filter bar */}
+                <div className="flex flex-wrap items-center gap-2 py-2">
+                  <span className="text-[10px] font-mono text-muted-foreground tracking-wider mr-1">SORT</span>
+                  {([
+                    ["score", "Best match"],
+                    ["twins", "Most twins"],
+                    ["confidence", "Confidence"],
+                    ["year", "Newest"],
+                    ["title", "A–Z"],
+                  ] as [typeof sortBy, string][]).map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => setSortBy(key)}
+                      className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
+                        sortBy === key
+                          ? "bg-primary/20 text-primary"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+
+                  <span className="text-border mx-1">|</span>
+                  <span className="text-[10px] font-mono text-muted-foreground tracking-wider mr-1">FILTER</span>
+                  {([
+                    [null, "All"],
+                    ["HIGH MATCH", "High match"],
+                    ["LIKELY", "Likely"],
+                    ["WILD CARD", "Wild card"],
+                  ] as [string | null, string][]).map(([key, label]) => (
+                    <button
+                      key={label}
+                      onClick={() => setFilterConfidence(key)}
+                      className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
+                        filterConfidence === key
+                          ? "bg-primary/20 text-primary"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+
+                  <span className="flex-1" />
+                  <span className="text-[10px] font-mono text-muted-foreground">
+                    {sortedRecs.length} film{sortedRecs.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
+
+                <div className="divide-y divide-border/30">
+                  {sortedRecs.map((rec) => (
+                    <FilmCard
+                      key={rec.id}
+                      filmTitle={rec.filmTitle}
+                      filmYear={rec.filmYear}
+                      filmSlug={rec.filmSlug}
+                      predictedScore={rec.predictedScore}
+                      confidence={rec.confidence}
+                      reason={rec.reason}
+                      onAction={(action, rating) =>
+                        handleAction(
+                          rec.id,
+                          rec.filmSlug || "",
+                          rec.filmTitle,
+                          action,
+                          rating
+                        )
+                      }
+                    />
+                  ))}
+                </div>
+
+                {sortedRecs.length === 0 && recs.length > 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    No recs match this filter.{" "}
+                    <button onClick={() => setFilterConfidence(null)} className="text-primary hover:underline">
+                      Clear filter
+                    </button>
+                  </p>
+                )}
+              </>
             )}
           </div>
 
