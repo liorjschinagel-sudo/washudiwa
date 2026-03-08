@@ -31,7 +31,7 @@ interface FilmCardProps {
   hidden?: boolean;
 }
 
-const HALF_STARS = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
+const RATING_VALUES = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
 
 export function FilmCard({
   filmTitle,
@@ -230,12 +230,13 @@ export function FilmCard({
               <div className="flex items-center gap-2">
                 <p className="text-xs text-muted-foreground">Your rating:</p>
                 {hoveredStar !== null && (
-                  <span className="text-xs font-mono text-primary">{hoveredStar}★</span>
+                  <span className="text-sm font-mono text-primary font-bold">
+                    {"★".repeat(Math.floor(hoveredStar))}{hoveredStar % 1 !== 0 ? "½" : ""}
+                  </span>
                 )}
               </div>
-              <div className="flex gap-0">
-                {HALF_STARS.map((val) => {
-                  const isHalf = val % 1 !== 0;
+              <div className="flex gap-1">
+                {RATING_VALUES.map((val) => {
                   const lit = hoveredStar !== null && val <= hoveredStar;
                   return (
                     <button
@@ -243,16 +244,10 @@ export function FilmCard({
                       onMouseEnter={() => setHoveredStar(val)}
                       onMouseLeave={() => setHoveredStar(null)}
                       onClick={() => handleAction("seen", val)}
-                      className={`transition-colors ${isHalf ? "w-3" : "w-3"} text-sm leading-none overflow-hidden ${
-                        lit ? "text-primary" : "text-muted-foreground/20"
+                      className={`w-4 h-4 rounded-full transition-colors ${
+                        lit ? "bg-primary" : "bg-muted-foreground/20"
                       }`}
-                      style={{
-                        clipPath: isHalf ? "inset(0 50% 0 0)" : "inset(0 0 0 50%)",
-                        marginRight: isHalf ? "-3px" : "2px",
-                      }}
-                    >
-                      ★
-                    </button>
+                    />
                   );
                 })}
               </div>
