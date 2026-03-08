@@ -11,53 +11,69 @@ import {
 const MIN_RATINGS_FOR_TWIN = 10;
 
 /**
- * Phase 1 of discovery: finds new Letterboxd usernames and queues them.
- * Sources: the /members/ page + film pages for the user's top-rated films.
- * Returns the number of new profiles queued.
+ * Discovery Phase 1: finds new Letterboxd usernames from the user's films.
+ *
+ * Takes an offset to crawl different films on each call. The client
+ * increments the offset until all top films have been crawled.
+ *
+ * Each call scrapes `batchSize` film pages (~10 users each) plus the
+ * /members/ page on the first call.
  */
 export async function discoverNewProfiles(
-  userProfileId: string
-): Promise<{ discovered: number; source: string }> {
+  userProfileId: string,
+  filmOffset: number = 0,
+  batchSize: number = 10
+): Promise<{
+  discovered: number;
+  filmsScanned: number;
+  totalTopFilms: number;
+  hasMoreFilms: boolean;
+}> {
   const existing = await db
     .select({ username: profiles.letterboxdUsername })
     .from(profiles);
   const known = new Set(existing.map((p) => p.username.toLowerCase()));
-
   let newUsernames: string[] = [];
-  let source = "";
 
-  // Pull from /members/ page first
-  const membersUsers = await discoverFromMembersPage();
-  const freshFromMembers = membersUsers.filter((u) => !known.has(u));
-
-  if (freshFromMembers.length > 0) {
-    newUsernames = freshFromMembers;
-    source = "members-page";
+  // On first batch, also pull from /members/
+  if (filmOffset === 0) {
+    const membersUsers = await discoverFromMembersPage();
+    const fresh = membersUsers.filter((u) => !known.has(u));
+    newUsernames.push(...fresh);
+    for (const u of fresh) known.add(u);
   }
 
-  // Pull from user's top-rated films
-  const userTopFilms = await db
+  // Get user's top-rated films (loves + hates — both matter for twin discovery)
+  const userFilms = await db
     .select({ filmSlug: ratings.filmSlug, rating: ratings.rating })
     .from(ratings)
     .where(eq(ratings.profileId, userProfileId));
 
-  const topFilmSlugs = userTopFilms
-    .filter((r) => parseFloat(r.rating) >= 4.0 && r.filmSlug)
-    .sort((a, b) => parseFloat(b.rating) - parseFloat(a.rating))
-    .slice(0, 20)
-    .map((r) => r.filmSlug!);
+  const significantFilms = userFilms
+    .filter(
+      (r) =>
+        r.filmSlug &&
+        (parseFloat(r.rating) >= 4.0 || parseFloat(r.rating) <= 2.0)
+    )
+    .sort((a, b) => {
+      const aExtreme = Math.abs(parseFloat(a.rating) - 2.5);
+      const bExtreme = Math.abs(parseFloat(b.rating) - 2.5);
+      return bExtreme - aExtreme;
+    });
 
-  // Pick a random subset of 3 films to scrape per call (keeps each call fast)
-  const shuffled = topFilmSlugs.sort(() => Math.random() - 0.5);
-  const filmBatch = shuffled.slice(0, 3);
+  const totalTopFilms = significantFilms.length;
+  const filmBatch = significantFilms.slice(filmOffset, filmOffset + batchSize);
 
-  for (const slug of filmBatch) {
-    const filmUsers = await discoverFromFilmPage(slug);
-    const fresh = filmUsers.filter(
-      (u) => !known.has(u) && !newUsernames.includes(u)
-    );
-    newUsernames.push(...fresh);
-    if (!source && fresh.length > 0) source = `film:${slug}`;
+  for (const film of filmBatch) {
+    if (!film.filmSlug) continue;
+    try {
+      const filmUsers = await discoverFromFilmPage(film.filmSlug);
+      const fresh = filmUsers.filter(
+        (u) => !known.has(u) && !newUsernames.includes(u)
+      );
+      newUsernames.push(...fresh);
+      for (const u of fresh) known.add(u);
+    } catch {}
   }
 
   // Queue all discovered usernames
@@ -66,105 +82,116 @@ export async function discoverNewProfiles(
     try {
       await db
         .insert(profiles)
-        .values({
-          letterboxdUsername: username,
-          profileType: "queued",
-        })
+        .values({ letterboxdUsername: username, profileType: "queued" })
         .onConflictDoNothing();
       queued++;
-    } catch {
-      // username already exists
-    }
+    } catch {}
   }
 
-  return { discovered: queued, source: source || "none" };
+  return {
+    discovered: queued,
+    filmsScanned: filmBatch.length,
+    totalTopFilms,
+    hasMoreFilms: filmOffset + batchSize < totalTopFilms,
+  };
 }
 
 /**
- * Phase 2 of discovery: picks one queued profile, quick-scrapes their ratings,
- * and promotes them to 'discovered'. Returns info about what was processed.
+ * Discovery Phase 2: quick-scrapes queued profiles in a batch.
+ * Processes up to `count` profiles per call.
  */
-export async function processNextQueued(): Promise<{
-  status: "processed" | "skipped" | "empty";
-  username: string | null;
-  ratingsFound: number;
+export async function processQueuedBatch(
+  count: number = 3
+): Promise<{
+  processed: number;
+  skipped: number;
   queueRemaining: number;
+  poolSize: number;
+  details: string[];
 }> {
-  // Pick the next queued profile
-  const [next] = await db
+  const queued = await db
     .select()
     .from(profiles)
     .where(eq(profiles.profileType, "queued"))
-    .limit(1);
+    .limit(count);
 
-  if (!next) {
-    return { status: "empty", username: null, ratingsFound: 0, queueRemaining: 0 };
+  if (queued.length === 0) {
+    const ps = await getPoolSize();
+    return { processed: 0, skipped: 0, queueRemaining: 0, poolSize: ps, details: [] };
   }
 
-  const username = next.letterboxdUsername;
+  let processed = 0;
+  let skipped = 0;
+  const details: string[] = [];
 
-  try {
-    const scrapedRatings = await quickScrapeUserRatings(username);
+  for (const profile of queued) {
+    const username = profile.letterboxdUsername;
+    try {
+      const scrapedRatings = await quickScrapeUserRatings(username);
 
-    if (scrapedRatings.length < MIN_RATINGS_FOR_TWIN) {
-      // Not enough data — remove from queue
-      await db.delete(profiles).where(eq(profiles.id, next.id));
-      const remaining = await getQueueSize();
-      return { status: "skipped", username, ratingsFound: 0, queueRemaining: remaining };
-    }
+      if (scrapedRatings.length < MIN_RATINGS_FOR_TWIN) {
+        await db.delete(profiles).where(eq(profiles.id, profile.id));
+        skipped++;
+        details.push(`${username}: skipped (${scrapedRatings.length} ratings)`);
+        continue;
+      }
 
-    // Get their profile stats
-    const stats = await scrapeProfileStats(username);
+      const stats = await scrapeProfileStats(username);
 
-    // Promote to discovered
-    await db
-      .update(profiles)
-      .set({
-        profileType: "discovered",
-        displayName: stats.displayName,
-        totalFilms: stats.totalFilms,
-        lastScrapedAt: new Date(),
-      })
-      .where(eq(profiles.id, next.id));
-
-    // Deduplicate (rewatches produce duplicate slugs in RSS)
-    const seenSlugs = new Set<string>();
-    const dedupedRatings = scrapedRatings.filter((r) => {
-      if (seenSlugs.has(r.filmSlug)) return false;
-      seenSlugs.add(r.filmSlug);
-      return true;
-    });
-
-    const batchSize = 50;
-    for (let i = 0; i < dedupedRatings.length; i += batchSize) {
-      const batch = dedupedRatings.slice(i, i + batchSize);
       await db
-        .insert(ratings)
-        .values(
-          batch.map((r) => ({
-            profileId: next.id,
-            filmTitle: r.filmTitle,
-            filmYear: r.filmYear,
-            filmSlug: r.filmSlug,
-            rating: r.rating.toString(),
-          }))
-        )
-        .onConflictDoNothing();
-    }
+        .update(profiles)
+        .set({
+          profileType: "discovered",
+          displayName: stats.displayName,
+          totalFilms: stats.totalFilms,
+          lastScrapedAt: new Date(),
+        })
+        .where(eq(profiles.id, profile.id));
 
-    const remaining = await getQueueSize();
-    return {
-      status: "processed",
-      username,
-      ratingsFound: scrapedRatings.length,
-      queueRemaining: remaining,
-    };
-  } catch {
-    // On error, remove from queue so we don't get stuck
-    await db.delete(profiles).where(eq(profiles.id, next.id));
-    const remaining = await getQueueSize();
-    return { status: "skipped", username, ratingsFound: 0, queueRemaining: remaining };
+      // Deduplicate and insert ratings
+      const seenSlugs = new Set<string>();
+      const deduped = scrapedRatings.filter((r) => {
+        if (seenSlugs.has(r.filmSlug)) return false;
+        seenSlugs.add(r.filmSlug);
+        return true;
+      });
+
+      const batchSize = 50;
+      for (let i = 0; i < deduped.length; i += batchSize) {
+        const batch = deduped.slice(i, i + batchSize);
+        await db
+          .insert(ratings)
+          .values(
+            batch.map((r) => ({
+              profileId: profile.id,
+              filmTitle: r.filmTitle,
+              filmYear: r.filmYear,
+              filmSlug: r.filmSlug,
+              rating: r.rating.toString(),
+            }))
+          )
+          .onConflictDoNothing();
+      }
+
+      processed++;
+      details.push(`${username}: ${deduped.length} ratings`);
+    } catch {
+      await db.delete(profiles).where(eq(profiles.id, profile.id));
+      skipped++;
+      details.push(`${username}: error`);
+    }
   }
+
+  const remaining = await getQueueSize();
+  const ps = await getPoolSize();
+
+  return {
+    processed,
+    skipped,
+    queueRemaining: remaining,
+    poolSize: ps,
+    details,
+  };
 }
 
 export async function getPoolSize(): Promise<number> {

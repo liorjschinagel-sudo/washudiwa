@@ -164,56 +164,61 @@ export default function DashboardPage() {
 
   async function handleGenerateRecs() {
     abortRef.current = false;
-    const MIN_POOL_TARGET = 15;
 
-    // Phase 1: Discover new usernames from the Letterboxd universe
+    // Phase 1: Crawl ALL significant films for user discovery
     setGeneratingPhase("seeding");
-    setSeedProgress("Scanning Letterboxd for taste twin candidates...");
+    setSeedProgress("Scanning your films for taste twin candidates...");
 
-    try {
-      const findRes = await fetch("/api/discover", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "find" }),
-      });
-      const findData = await findRes.json();
-      setSeedProgress(
-        `Found ${findData.discovered} new profiles from ${findData.source || "Letterboxd"}. Queue: ${findData.queueSize}`
-      );
-      setPoolSize(findData.poolSize);
-    } catch {
-      toast.error("Discovery error");
+    let filmOffset = 0;
+    let totalDiscovered = 0;
+    let totalTopFilms = 0;
+
+    while (!abortRef.current) {
+      try {
+        const findRes = await fetch("/api/discover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "find", filmOffset, batchSize: 10 }),
+        });
+        const data = await findRes.json();
+
+        totalDiscovered += data.discovered;
+        totalTopFilms = data.totalTopFilms;
+        filmOffset += data.filmsScanned;
+
+        setSeedProgress(
+          `Crawled ${filmOffset} of ${totalTopFilms} films — ${totalDiscovered} new profiles found (${data.queueSize} queued)`
+        );
+        setPoolSize(data.poolSize);
+
+        if (!data.hasMoreFilms) break;
+      } catch {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
     }
 
     if (abortRef.current) { setGeneratingPhase(null); return; }
 
-    // Phase 2: Quick-scrape queued profiles until pool is large enough
-    let processedCount = 0;
+    // Phase 2: Quick-scrape the ENTIRE queue
+    setSeedProgress(`Scraping ${totalDiscovered}+ discovered profiles...`);
+
     while (!abortRef.current) {
       try {
         const res = await fetch("/api/discover", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "process" }),
+          body: JSON.stringify({ action: "process", count: 3 }),
         });
         const data = await res.json();
 
-        if (data.status === "empty") break;
+        if (data.queueRemaining === 0 && data.processed === 0) break;
 
-        if (data.status === "processed") {
-          processedCount++;
-          setSeedProgress(
-            `Scraped ${data.username} — ${data.ratingsFound} ratings (${data.poolSize} in pool, ${data.queueRemaining} queued)`
-          );
-          setPoolSize(data.poolSize);
-        } else if (data.status === "skipped") {
-          setSeedProgress(
-            `Skipped ${data.username} (too few ratings). ${data.queueRemaining} queued`
-          );
-        }
+        const names = data.details?.join(", ") ?? "";
+        setSeedProgress(
+          `${data.poolSize} profiles in pool, ${data.queueRemaining} left to scrape${names ? ` — ${names}` : ""}`
+        );
+        setPoolSize(data.poolSize);
 
-        // Stop when pool is large enough or queue is empty
-        if (data.poolSize >= MIN_POOL_TARGET && processedCount >= 5) break;
         if (data.queueRemaining <= 0) break;
       } catch {
         await new Promise((r) => setTimeout(r, 2000));
@@ -222,7 +227,7 @@ export default function DashboardPage() {
 
     if (abortRef.current) { setGeneratingPhase(null); return; }
 
-    // Phase 3: Compute taste matches
+    // Phase 3: Compute taste matches against the full pool
     setGeneratingPhase("recomputing");
     try {
       const res = await fetch("/api/recompute", { method: "POST" });
@@ -248,14 +253,14 @@ export default function DashboardPage() {
       if (data.recommendations?.length > 0) {
         setRecs(data.recommendations);
         setTasteIndexStatus({ fresh: true, computedAt: new Date().toISOString() });
-        toast.success(`Generated ${data.totalGenerated} recommendations from ${poolSize}+ profiles`);
+        toast.success(`Generated ${data.totalGenerated} recs from ${poolSize}+ profiles across ${totalTopFilms} films`);
         const userRes = await fetch("/api/user");
         if (userRes.ok) {
           const ud = await userRes.json();
           setTwins(ud.twins || []);
         }
       } else if (data.needsRecompute) {
-        toast.error("Not enough taste overlap found. Try again — we'll discover more profiles.");
+        toast.error("Not enough taste overlap. Try refreshing — the pool grows each time.");
       } else {
         toast.error(data.error || "No recommendations generated");
       }

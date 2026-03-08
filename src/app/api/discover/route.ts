@@ -5,19 +5,20 @@ import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import {
   discoverNewProfiles,
-  processNextQueued,
+  processQueuedBatch,
   getPoolSize,
   getQueueSize,
 } from "@/lib/engine/discover";
 
 /**
  * POST /api/discover
- * 
- * action = "find"     → discover new usernames from members page + film pages
- * action = "process"  → quick-scrape one queued profile
- * 
- * The client calls "find" once, then loops "process" until the queue is drained
- * or the pool is large enough.
+ *
+ * action = "find"     → crawl film pages + members page for new usernames
+ *   - filmOffset: which film to start from (client increments)
+ *   - batchSize: how many film pages to crawl per call (default 10)
+ *
+ * action = "process"  → quick-scrape a batch of queued profiles
+ *   - count: how many to process per call (default 3)
  */
 export async function POST(req: NextRequest) {
   try {
@@ -26,7 +27,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { action = "process" } = await req.json();
+    const body = await req.json();
+    const action = body.action ?? "process";
 
     const [user] = await db
       .select()
@@ -42,27 +44,32 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "find") {
-      const result = await discoverNewProfiles(user.profileId);
-      const poolSize = await getPoolSize();
+      const filmOffset = body.filmOffset ?? 0;
+      const batchSize = body.batchSize ?? 10;
+
+      const result = await discoverNewProfiles(
+        user.profileId,
+        filmOffset,
+        batchSize
+      );
       const queueSize = await getQueueSize();
+      const poolSize = await getPoolSize();
 
       return NextResponse.json({
         action: "find",
-        discovered: result.discovered,
-        source: result.source,
-        poolSize,
+        ...result,
         queueSize,
+        poolSize,
       });
     }
 
     if (action === "process") {
-      const result = await processNextQueued();
-      const poolSize = await getPoolSize();
+      const count = body.count ?? 3;
+      const result = await processQueuedBatch(count);
 
       return NextResponse.json({
         action: "process",
         ...result,
-        poolSize,
       });
     }
 
