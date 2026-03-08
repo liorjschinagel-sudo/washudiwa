@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { userFilmActions, ratings, users } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { userFilmActions, ratings, users, recommendations } from "@/lib/db/schema";
+import { eq, and } from "drizzle-orm";
 
 export async function POST(req: NextRequest) {
   try {
@@ -43,6 +43,16 @@ export async function POST(req: NextRequest) {
         },
       })
       .returning();
+
+    // Remove from recommendations so it doesn't reappear on reload
+    await db
+      .delete(recommendations)
+      .where(
+        and(
+          eq(recommendations.userId, session.user.id),
+          eq(recommendations.filmSlug, filmSlug)
+        )
+      );
 
     // If the user rated it, write back to the ratings table
     // so it enriches their taste profile for future twin scoring
