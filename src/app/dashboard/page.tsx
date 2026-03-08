@@ -46,6 +46,13 @@ interface TasteIndexStatus {
 }
 
 type GeneratingPhase = null | "seeding" | "recomputing" | "scoring" | "done";
+type DiscoveryDepth = "quick" | "deep" | "full";
+
+const DEPTH_CONFIG = {
+  quick: { filmPages: 5, maxQueue: 10, label: "Quick", desc: "~1 min", detail: "Top 5 films, 10 profiles" },
+  deep:  { filmPages: 30, maxQueue: 50, label: "Deep", desc: "~5 min", detail: "Top 30 films, 50 profiles" },
+  full:  { filmPages: Infinity, maxQueue: Infinity, label: "Full scan", desc: "10-20 min", detail: "Every film, every profile" },
+} as const;
 
 export default function DashboardPage() {
   const { data: session, status } = useSession();
@@ -79,6 +86,7 @@ export default function DashboardPage() {
   const [importing, setImporting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [recsExpanded, setRecsExpanded] = useState(true);
+  const [showDepthPicker, setShowDepthPicker] = useState(false);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -162,16 +170,19 @@ export default function DashboardPage() {
     return null;
   }
 
-  async function handleGenerateRecs() {
+  async function handleGenerateRecs(depth: DiscoveryDepth = "deep") {
     abortRef.current = false;
+    setShowDepthPicker(false);
+    const config = DEPTH_CONFIG[depth];
 
-    // Phase 1: Crawl ALL significant films for user discovery
+    // Phase 1: Crawl films for user discovery
     setGeneratingPhase("seeding");
-    setSeedProgress("Scanning your films for taste twin candidates...");
+    setSeedProgress(`${config.label} scan — discovering taste twin candidates...`);
 
     let filmOffset = 0;
     let totalDiscovered = 0;
     let totalTopFilms = 0;
+    let filmsCrawled = 0;
 
     while (!abortRef.current) {
       try {
@@ -185,13 +196,14 @@ export default function DashboardPage() {
         totalDiscovered += data.discovered;
         totalTopFilms = data.totalTopFilms;
         filmOffset += data.filmsScanned;
+        filmsCrawled += data.filmsScanned;
 
         setSeedProgress(
-          `Crawled ${filmOffset} of ${totalTopFilms} films — ${totalDiscovered} new profiles found (${data.queueSize} queued)`
+          `Crawled ${filmOffset} of ${Math.min(config.filmPages, totalTopFilms)} films — ${totalDiscovered} new profiles found`
         );
         setPoolSize(data.poolSize);
 
-        if (!data.hasMoreFilms) break;
+        if (!data.hasMoreFilms || filmsCrawled >= config.filmPages) break;
       } catch {
         await new Promise((r) => setTimeout(r, 1000));
       }
@@ -199,8 +211,8 @@ export default function DashboardPage() {
 
     if (abortRef.current) { setGeneratingPhase(null); return; }
 
-    // Phase 2: Quick-scrape the ENTIRE queue
-    setSeedProgress(`Scraping ${totalDiscovered}+ discovered profiles...`);
+    // Phase 2: Quick-scrape queued profiles (up to maxQueue)
+    let scraped = 0;
 
     while (!abortRef.current) {
       try {
@@ -213,13 +225,15 @@ export default function DashboardPage() {
 
         if (data.queueRemaining === 0 && data.processed === 0) break;
 
-        const names = data.details?.join(", ") ?? "";
+        scraped += data.processed;
+        const names = data.details?.filter((d: string) => !d.includes("skipped") && !d.includes("error")).join(", ") ?? "";
         setSeedProgress(
-          `${data.poolSize} profiles in pool, ${data.queueRemaining} left to scrape${names ? ` — ${names}` : ""}`
+          `${data.poolSize} profiles scraped, ${data.queueRemaining} queued${names ? ` — ${names}` : ""}`
         );
         setPoolSize(data.poolSize);
 
         if (data.queueRemaining <= 0) break;
+        if (scraped >= config.maxQueue) break;
       } catch {
         await new Promise((r) => setTimeout(r, 2000));
       }
@@ -227,7 +241,7 @@ export default function DashboardPage() {
 
     if (abortRef.current) { setGeneratingPhase(null); return; }
 
-    // Phase 3: Compute taste matches against the full pool
+    // Phase 3: Compute taste matches
     setGeneratingPhase("recomputing");
     try {
       const res = await fetch("/api/recompute", { method: "POST" });
@@ -244,7 +258,7 @@ export default function DashboardPage() {
 
     if (abortRef.current) { setGeneratingPhase(null); return; }
 
-    // Phase 4: Generate recommendations from taste twins
+    // Phase 4: Generate recommendations
     setGeneratingPhase("scoring");
     try {
       const res = await fetch("/api/recommendations", { method: "POST" });
@@ -253,14 +267,14 @@ export default function DashboardPage() {
       if (data.recommendations?.length > 0) {
         setRecs(data.recommendations);
         setTasteIndexStatus({ fresh: true, computedAt: new Date().toISOString() });
-        toast.success(`Generated ${data.totalGenerated} recs from ${poolSize}+ profiles across ${totalTopFilms} films`);
+        toast.success(`${data.totalGenerated} recs from ${poolSize}+ profiles (${config.label.toLowerCase()} scan)`);
         const userRes = await fetch("/api/user");
         if (userRes.ok) {
           const ud = await userRes.json();
           setTwins(ud.twins || []);
         }
       } else if (data.needsRecompute) {
-        toast.error("Not enough taste overlap. Try refreshing — the pool grows each time.");
+        toast.error("Not enough overlap. Try a deeper scan.");
       } else {
         toast.error(data.error || "No recommendations generated");
       }
@@ -646,17 +660,40 @@ export default function DashboardPage() {
                   </p>
                 </div>
               </button>
-              <Button
-                onClick={handleGenerateRecs}
-                disabled={isGenerating}
-                className="font-mono text-sm"
-              >
-                {isGenerating
-                  ? "WORKING..."
-                  : recs.length > 0
-                    ? "REFRESH RECS"
-                    : "GENERATE RECS"}
-              </Button>
+              <div className="relative">
+                <Button
+                  onClick={() => isGenerating ? null : setShowDepthPicker(!showDepthPicker)}
+                  disabled={isGenerating}
+                  className="font-mono text-sm"
+                >
+                  {isGenerating
+                    ? "WORKING..."
+                    : recs.length > 0
+                      ? "REFRESH RECS ▾"
+                      : "GENERATE RECS ▾"}
+                </Button>
+
+                {showDepthPicker && !isGenerating && (
+                  <div className="absolute right-0 top-full mt-2 w-64 bg-card border border-border rounded-lg shadow-xl z-50 overflow-hidden">
+                    {(["quick", "deep", "full"] as DiscoveryDepth[]).map((depth) => {
+                      const c = DEPTH_CONFIG[depth];
+                      return (
+                        <button
+                          key={depth}
+                          onClick={() => handleGenerateRecs(depth)}
+                          className="w-full px-4 py-3 text-left hover:bg-secondary/50 transition-colors border-b border-border/30 last:border-0"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-bold">{c.label}</span>
+                            <span className="text-[10px] font-mono text-muted-foreground">{c.desc}</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">{c.detail}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
 
             {backgroundUpdating && (
@@ -686,11 +723,11 @@ export default function DashboardPage() {
                     No recommendations yet.
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    Hit &quot;Generate Recs&quot; to scan the Letterboxd universe
-                    for your taste twins and get personalized film picks.
+                    Hit &quot;Generate Recs&quot; and pick your depth — quick for
+                    instant results, full scan to search the entire Letterboxd galaxy.
                     {poolSize > 0
                       ? ` ${poolSize} profiles already in the pool.`
-                      : " First run discovers and scrapes profiles (~3-5 min)."}
+                      : ""}
                   </p>
                 </CardContent>
               </Card>
