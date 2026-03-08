@@ -1,22 +1,41 @@
 export function BlinkingEye({ className = "w-5 h-3" }: { className?: string }) {
   return (
     <span className={`inline-flex items-center shrink-0 ${className}`}>
-      <svg viewBox="0 0 32 21" fill="none" className="w-full h-full">
+      <svg viewBox="0 0 24 14" fill="none" className="w-full h-full">
         <style>{`
-          @keyframes blink {
-            0%, 85%, 100% { transform: scaleY(1); }
-            90% { transform: scaleY(0.05); }
+          @keyframes eyeBlink {
+            0%, 80%, 100% { transform: scaleY(1); }
+            85% { transform: scaleY(0.05); }
+            90% { transform: scaleY(1); }
+            95% { transform: scaleY(0.05); }
           }
-          .eye-blink { animation: blink 3s ease-in-out infinite; transform-origin: center; }
+          @keyframes irisShift {
+            0%, 80% { fill: var(--primary); }
+            85% { fill: white; }
+            90% { fill: var(--primary); }
+            95% { fill: #111; }
+            100% { fill: var(--primary); }
+          }
+          @keyframes pupilShift {
+            0%, 80% { fill: var(--background); }
+            85% { fill: #111; }
+            90% { fill: var(--background); }
+            95% { fill: white; }
+            100% { fill: var(--background); }
+          }
+          .eye-group { animation: eyeBlink 4s ease-in-out infinite; transform-origin: center; }
+          .iris { animation: irisShift 4s ease-in-out infinite; }
+          .pupil { animation: pupilShift 4s ease-in-out infinite; }
         `}</style>
-        <g className="eye-blink">
+        <g className="eye-group">
           <path
-            d="M16 2C17.242 2.93147 18.25 4.13931 18.944 5.52786C19.639 6.91642 20 8.44755 20 10C20 11.5525 19.639 13.0836 18.944 14.4721C18.25 15.8607 17.242 17.0685 16 18C14.758 17.0685 13.75 15.8607 13.056 14.4721C12.361 13.0836 12 11.5525 12 10C12 8.44755 12.361 6.91642 13.056 5.52786C13.75 4.13931 14.758 2.93147 16 2Z"
-            fill="var(--primary)"
+            d="M12 1C6 1 1 7 1 7s5 6 11 6 11-6 11-6-5-6-11-6Z"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            fill="none"
           />
-          <circle cx="10" cy="10" r="10" stroke="currentColor" strokeWidth="1.5" fill="none" />
-          <circle cx="22" cy="10" r="10" stroke="currentColor" strokeWidth="1.5" fill="none" />
-          <circle cx="16" cy="10" r="2.5" fill="var(--background)" />
+          <circle cx="12" cy="7" r="4" className="iris" />
+          <circle cx="12" cy="7" r="1.5" className="pupil" />
         </g>
       </svg>
     </span>
