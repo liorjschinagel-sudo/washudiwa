@@ -48,6 +48,12 @@ interface TasteIndexStatus {
 type GeneratingPhase = null | "seeding" | "recomputing" | "scoring" | "done";
 type DiscoveryDepth = "quick" | "deep" | "full";
 
+const POPULAR_SERVICES = [
+  "Netflix", "HBO Max", "Hulu", "Disney+", "Amazon Prime Video",
+  "Apple TV+", "Peacock", "Paramount+", "Max", "Criterion Channel",
+  "MUBI", "Shudder", "Tubi", "Pluto TV", "Kanopy",
+];
+
 const DEPTH_CONFIG = {
   quick: { filmPages: 10, maxQueue: 25, label: "Quick", desc: "~3 min", detail: "Top 10 films, 25 profiles" },
   deep:  { filmPages: 30, maxQueue: 75, label: "Deep", desc: "~10 min", detail: "Top 30 films, 75 profiles" },
@@ -92,12 +98,17 @@ export default function DashboardPage() {
   const [sortBy, setSortBy] = useState<"score" | "confidence" | "title" | "year" | "twins">("score");
   const [filterConfidence, setFilterConfidence] = useState<string | null>(null);
   const [interimAvailable, setInterimAvailable] = useState(false);
+  const [myServices, setMyServices] = useState<string[]>([]);
+  const [filterStreaming, setFilterStreaming] = useState(false);
+  const [filmProviders, setFilmProviders] = useState<Record<string, string[]>>({});
+  const [showServicePicker, setShowServicePicker] = useState(false);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [userRes, recsRes] = await Promise.all([
+      const [userRes, recsRes, prefsRes] = await Promise.all([
         fetch("/api/user"),
         fetch("/api/recommendations"),
+        fetch("/api/preferences"),
       ]);
 
       if (userRes.ok) {
@@ -109,6 +120,11 @@ export default function DashboardPage() {
         setUserData(data.user);
         setTwins(data.twins || []);
         setTopLoves(data.topLoves || []);
+      }
+
+      if (prefsRes.ok) {
+        const data = await prefsRes.json();
+        setMyServices(data.services || []);
       }
 
       if (recsRes.ok) {
@@ -453,6 +469,24 @@ export default function DashboardPage() {
     }
   }
 
+  function handleProviderLoaded(filmSlug: string, providers: string[]) {
+    setFilmProviders((prev) => ({ ...prev, [filmSlug]: providers }));
+  }
+
+  async function toggleService(service: string) {
+    const updated = myServices.includes(service)
+      ? myServices.filter((s) => s !== service)
+      : [...myServices, service];
+    setMyServices(updated);
+    try {
+      await fetch("/api/preferences", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ services: updated }),
+      });
+    } catch {}
+  }
+
   function handleImportInput(e: React.ChangeEvent<HTMLInputElement>) {
     if (e.target.files) handleImportFiles(Array.from(e.target.files));
   }
@@ -543,6 +577,11 @@ export default function DashboardPage() {
 
   const sortedRecs = [...recs]
     .filter((r) => !filterConfidence || r.confidence === filterConfidence)
+    .filter((r) => {
+      if (!filterStreaming || myServices.length === 0) return true;
+      const providers = filmProviders[r.filmSlug ?? ""] ?? [];
+      return providers.some((p) => myServices.includes(p));
+    })
     .sort((a, b) => {
       switch (sortBy) {
         case "score":
@@ -912,6 +951,22 @@ export default function DashboardPage() {
                     </button>
                   ))}
 
+                  {myServices.length > 0 && (
+                    <>
+                      <span className="text-border mx-1">|</span>
+                      <button
+                        onClick={() => setFilterStreaming(!filterStreaming)}
+                        className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
+                          filterStreaming
+                            ? "bg-primary/20 text-primary"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        My services
+                      </button>
+                    </>
+                  )}
+
                   <span className="flex-1" />
                   <span className="text-[10px] font-mono text-muted-foreground">
                     {sortedRecs.length} film{sortedRecs.length !== 1 ? "s" : ""}
@@ -937,6 +992,7 @@ export default function DashboardPage() {
                           rating
                         )
                       }
+                      onMetaLoaded={handleProviderLoaded}
                     />
                   ))}
                 </div>
@@ -954,6 +1010,55 @@ export default function DashboardPage() {
           </div>
 
           <div className="w-full lg:w-80 space-y-6">
+            {/* Streaming services picker */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-mono tracking-wide flex items-center justify-between">
+                  MY STREAMING SERVICES
+                  <button
+                    onClick={() => setShowServicePicker(!showServicePicker)}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    {showServicePicker ? "done" : "edit"}
+                  </button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {showServicePicker ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {POPULAR_SERVICES.map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => toggleService(s)}
+                        className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                          myServices.includes(s)
+                            ? "border-primary bg-primary/15 text-primary"
+                            : "border-border/50 text-muted-foreground hover:border-primary/40"
+                        }`}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                ) : myServices.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {myServices.map((s) => (
+                      <span
+                        key={s}
+                        className="text-xs px-2.5 py-1 rounded-full border border-primary/30 bg-primary/10 text-primary"
+                      >
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Add your services to filter recs by what&apos;s streamable for you.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-mono tracking-wide">

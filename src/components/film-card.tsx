@@ -27,6 +27,8 @@ interface FilmCardProps {
   confidence: string | null;
   reason: string | null;
   onAction: (action: string, rating?: number) => void;
+  onMetaLoaded?: (filmSlug: string, providers: string[]) => void;
+  hidden?: boolean;
 }
 
 const STAR_VALUES = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
@@ -38,6 +40,8 @@ export function FilmCard({
   confidence,
   reason,
   onAction,
+  onMetaLoaded,
+  hidden,
 }: FilmCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [meta, setMeta] = useState<FilmMeta | null>(null);
@@ -54,11 +58,21 @@ export function FilmCard({
 
       fetch(`/api/film?${params}`)
         .then((r) => r.json())
-        .then((data) => setMeta(data.info))
+        .then((data) => {
+          setMeta(data.info);
+          if (data.info?.providers && filmSlug) {
+            const streamNames = data.info.providers
+              .filter((p: WatchProvider) => p.type === "stream")
+              .map((p: WatchProvider) => p.name);
+            onMetaLoaded?.(filmSlug, streamNames);
+          }
+        })
         .catch(() => {})
         .finally(() => setMetaLoading(false));
     }
   }, [filmTitle, filmYear]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (hidden) return null;
 
   function handleAction(action: string, rating?: number) {
     setExiting(true);

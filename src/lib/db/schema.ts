@@ -35,6 +35,7 @@ export const users = pgTable("users", {
   tasteIndexComputedAt: timestamp("taste_index_computed_at", {
     withTimezone: true,
   }),
+  streamingServices: text("streaming_services"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
