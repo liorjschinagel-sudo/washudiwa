@@ -1,0 +1,10 @@
+---
+description: Git commit workflow — always ask before committing
+alwaysApply: true
+---
+
+# Git Workflow
+
+After making code changes, always ask the user if they'd like to commit before doing so. Never commit automatically without explicit approval.
+
+When the user approves, commit and push to deploy (Vercel auto-deploys from main).

@@ -88,6 +88,8 @@ export default function DashboardPage() {
   const [recsExpanded, setRecsExpanded] = useState(true);
   const [showDepthPicker, setShowDepthPicker] = useState(false);
   const [eta, setEta] = useState<string | null>(null);
+  const [progressMinimized, setProgressMinimized] = useState(false);
+  const [interimAvailable, setInterimAvailable] = useState(false);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -232,8 +234,10 @@ export default function DashboardPage() {
 
     // Phase 2: Quick-scrape queued profiles (up to maxQueue)
     let scraped = 0;
+    let processedSinceInterim = 0;
     const scrapeStart = Date.now();
     let queueTotal = 0;
+    setInterimAvailable(false);
 
     while (!abortRef.current) {
       try {
@@ -247,6 +251,7 @@ export default function DashboardPage() {
         if (data.queueRemaining === 0 && data.processed === 0) break;
 
         scraped += data.processed + data.skipped;
+        processedSinceInterim += data.processed;
         if (queueTotal === 0) queueTotal = scraped + data.queueRemaining;
 
         // Live ETA based on actual scrape rate
@@ -255,6 +260,25 @@ export default function DashboardPage() {
         const remaining = Math.min(data.queueRemaining, config.maxQueue - scraped);
         const scrapeEtaSec = remaining / Math.max(scrapeRate, 0.05);
         setEta(formatEta(scrapeEtaSec + 30));
+
+        // Every 10 profiles, generate interim recs in the background
+        if (processedSinceInterim >= 10 && data.poolSize >= 10) {
+          processedSinceInterim = 0;
+          try {
+            await fetch("/api/recompute", { method: "POST" });
+            const recsRes = await fetch("/api/recommendations", { method: "POST" });
+            const recsData = await recsRes.json();
+            if (recsData.recommendations?.length > 0) {
+              setRecs(recsData.recommendations);
+              setInterimAvailable(true);
+              const userRes = await fetch("/api/user");
+              if (userRes.ok) {
+                const ud = await userRes.json();
+                setTwins(ud.twins || []);
+              }
+            }
+          } catch {}
+        }
 
         const names = data.details?.filter((d: string) => !d.includes("skipped") && !d.includes("error")).join(", ") ?? "";
         setSeedProgress(
@@ -731,14 +755,62 @@ export default function DashboardPage() {
             )}
 
             {isGenerating && (
-              <div className="py-16 flex justify-center">
-                <LoadingAnimation
-                  stepLabel={getPhaseLabel()}
-                  stepDescription={getPhaseDescription()}
-                  detail={generatingPhase === "seeding" ? seedProgress : undefined}
-                  timeEstimate={eta ?? undefined}
-                />
-              </div>
+              progressMinimized ? (
+                <button
+                  onClick={() => setProgressMinimized(false)}
+                  className="w-full flex items-center gap-3 px-4 py-2 rounded-lg bg-secondary/40 border border-border/50 hover:bg-secondary/60 transition-colors"
+                >
+                  <div className="h-2 w-2 rounded-full bg-primary animate-pulse shrink-0" />
+                  <p className="text-xs font-mono text-muted-foreground flex-1 text-left truncate">
+                    {seedProgress || getPhaseLabel()}
+                  </p>
+                  {eta && (
+                    <span className="text-[10px] font-mono text-muted-foreground shrink-0">
+                      {eta}
+                    </span>
+                  )}
+                  <span className="text-xs text-muted-foreground">▼</span>
+                </button>
+              ) : (
+                <Card>
+                  <CardContent className="pt-5 pb-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+                        <p className="text-sm font-mono text-primary">
+                          {getPhaseLabel()}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {eta && (
+                          <span className="text-[10px] font-mono text-muted-foreground">
+                            {eta}
+                          </span>
+                        )}
+                        <button
+                          onClick={() => setProgressMinimized(true)}
+                          className="text-xs text-muted-foreground hover:text-foreground px-1"
+                        >
+                          ▲
+                        </button>
+                      </div>
+                    </div>
+                    {generatingPhase === "seeding" && seedProgress && (
+                      <p className="text-xs text-muted-foreground font-mono pl-5">
+                        {seedProgress}
+                      </p>
+                    )}
+                    <p className="text-xs text-muted-foreground pl-5">
+                      {getPhaseDescription()}
+                    </p>
+                    {interimAvailable && recs.length > 0 && (
+                      <p className="text-xs text-primary pl-5">
+                        ↓ {recs.length} recommendations available below — scroll down while we keep scanning
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              )
             )}
 
             {recs.length === 0 && !isGenerating && (
