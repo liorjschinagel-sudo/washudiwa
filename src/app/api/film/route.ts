@@ -13,10 +13,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "title required" }, { status: 400 });
   }
 
+  const hasKey = !!process.env.TMDB_API_KEY;
   const info = await lookupFilm(title, year);
 
   if (!info) {
-    return NextResponse.json({ info: null });
+    return NextResponse.json({ info: null, debug: { hasKey } });
   }
 
   return NextResponse.json({ info });
